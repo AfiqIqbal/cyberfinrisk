@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
-import withPWA from "next-pwa";
 
+// SWC native binary is incompatible on this system → Babel fallback via .babelrc
 const nextConfig: NextConfig = {
   async headers() {
     return [
@@ -21,7 +21,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withPWA({
-  dest: "public",
-  register: true,
-})(nextConfig);
+export default nextConfig;
