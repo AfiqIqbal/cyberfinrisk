@@ -15,7 +15,7 @@ import {
     ArrowRightLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ORGANIZATIONS } from "@/lib/mock-data";
+import { TENANTS } from "@/lib/mock-data";
 import { useAuth } from "@/context/AuthContext";
 import { useOrg } from "@/context/OrgContext";
 
@@ -188,8 +188,8 @@ export default function Sidebar() {
                 />
                 {activeDropdown === "tenant" && (
                     <DropdownMenu 
-                        items={ORGANIZATIONS} 
-                        onSelect={(org) => setActiveTenant(org)} 
+                        items={TENANTS} 
+                        onSelect={(t) => setActiveTenant(t)} 
                         activeId={activeTenant.id} 
                     />
                 )}
@@ -204,11 +204,8 @@ export default function Sidebar() {
                 />
                 {activeDropdown === "group" && (
                     <DropdownMenu 
-                        items={ORGANIZATIONS} 
-                        onSelect={(org) => {
-                            setActiveGroup(org);
-                            if (org.teams.length > 0) setActiveOrg(org.teams[0]);
-                        }} 
+                        items={activeTenant.groups} 
+                        onSelect={(g) => setActiveGroup(g)} 
                         activeId={activeGroup.id} 
                     />
                 )}
