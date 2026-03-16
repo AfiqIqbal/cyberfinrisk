@@ -68,6 +68,9 @@ export default function ScanPage() {
         };
     };
 
+    const [scanMessage, setScanMessage] = useState("");
+    const [scanPercent, setScanPercent] = useState(0);
+
     async function handleScan(payload: {
         company: CompanyContext;
         repo_url: string;
@@ -81,21 +84,22 @@ export default function ScanPage() {
 
         setLoading(true);
         setState("scanning");
+        setScanMessage("Cloning repository...");
+        setScanPercent(10);
         setError("");
+        
         try {
-            const data = await api.scanRepo(payload);
-
-            setResults({
-                results: data.results,
-                attack_chains: data.attack_chains,
-                executive_summary: data.executive_summary,
-                total_expected_loss: data.total_expected_loss,
-                total_fix_cost: data.total_fix_cost,
-                vulnerability_count: data.vulnerability_count,
-                filtered_count: data.filtered_count,
-                gemini_enabled: data.gemini_enabled,
+            await api.scanRepoStream(payload, (msg) => {
+                if (msg.status === "progress") {
+                    if (msg.message) setScanMessage(msg.message);
+                    if (msg.percent) setScanPercent(msg.percent);
+                } else if (msg.status === "done" && msg.data) {
+                    setResults(msg.data);
+                    setState("done");
+                } else if (msg.status === "error") {
+                    throw new Error(msg.message || "Scan failed unexpectedly");
+                }
             });
-            setState("done");
         } catch (err: any) {
             setError(err.message || "Failed to scan repository");
             setState("error");
@@ -111,6 +115,8 @@ export default function ScanPage() {
     }) {
         setLoading(true);
         setState("scanning");
+        setScanMessage("Analyzing vulnerabilities...");
+        setScanPercent(30);
         setError("");
         try {
             const data = await api.analyzeManual(payload);
@@ -185,14 +191,20 @@ export default function ScanPage() {
                 >
                     <Loader2 size={40} className="mx-auto mb-4 animate-spin" style={{ color: "var(--accent)" }} />
                     <h3 className="font-bold text-lg mb-1">
-                        {activeTab === "scan" ? "Scanning repository..." : "Analyzing vulnerabilities..."}
+                        {scanMessage}
                     </h3>
                     <p className="text-sm mb-6" style={{ color: "var(--muted-foreground)" }}>
                         {activeTab === "scan" ? "This may take a minute depending on repo size" : "Applying financial models and processing AI requests"}
                     </p>
                     <div className="w-full rounded-full h-1.5 mb-2 overflow-hidden" style={{ background: "var(--surface)" }}>
-                        <div className="h-full bg-[var(--accent)] animate-progress" style={{ width: "30%" }} />
+                        <div 
+                            className="h-full bg-[var(--accent)] transition-all duration-500 ease-out" 
+                            style={{ width: `${scanPercent}%` }} 
+                        />
                     </div>
+                    <p className="text-[10px] font-medium uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+                        {scanPercent}% Complete
+                    </p>
                 </div>
             )}
 

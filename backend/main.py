@@ -391,49 +391,71 @@ async def analyze_manual(req: ManualScanRequest):
     )
 
 
-@app.post("/scan-repo", response_model=AnalysisResponse)
+@app.post("/scan-repo")
 async def scan_repo(req: ScanRequest):
+    from fastapi.responses import StreamingResponse
     import time
     from concurrent.futures import ThreadPoolExecutor
-    repo_path = None
-    try:
-        t0 = time.time()
-        repo_path = clone_repo(req.repo_url, req.branch)
-        logger.info(f"[perf] Clone done in {time.time()-t0:.1f}s")
 
-        # Run Semgrep + Trivy concurrently (biggest speed win)
-        t_scan = time.time()
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            f_semgrep = ex.submit(run_semgrep, repo_path)
-            f_trivy   = ex.submit(run_trivy, repo_path)
-            semgrep_raw = f_semgrep.result()
-            trivy_raw   = f_trivy.result()
+    async def scan_generator():
+        repo_path = None
+        try:
+            t0 = time.time()
+            
+            # Step 1: Clone
+            yield json.dumps({"status": "progress", "message": "Cloning repository...", "percent": 10}) + "\n"
+            repo_path = clone_repo(req.repo_url, req.branch)
+            logger.info(f"[perf] Clone done in {time.time()-t0:.1f}s")
 
-        semgrep_parsed  = parse_semgrep_findings(semgrep_raw, req.company.deployment_exposure, repo_path)
-        trivy_parsed    = parse_trivy_findings(trivy_raw, req.company.deployment_exposure, repo_path)
-        combined_parsed = semgrep_parsed + trivy_parsed
-        logger.info(f"[perf] Scanners done in {time.time()-t_scan:.1f}s — {len(combined_parsed)} findings")
+            # Step 2: Static Analysis
+            yield json.dumps({"status": "progress", "message": "Running Semgrep and Trivy scans...", "percent": 30}) + "\n"
+            t_scan = time.time()
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_semgrep = ex.submit(run_semgrep, repo_path)
+                f_trivy   = ex.submit(run_trivy, repo_path)
+                semgrep_raw = f_semgrep.result()
+                trivy_raw   = f_trivy.result()
 
-        results, chains, filtered = run_risk_engine(combined_parsed, req.company, req.gemini_api_key)
-        os.makedirs("data", exist_ok=True)
-        with open("data/risk_results.json", "w") as f:
-            json.dump({"results": [r.dict() for r in results],
-                       "chains":  [c.dict() for c in chains]}, f, indent=2)
-        summary = generate_executive_summary(results, req.company, chains)
-        logger.info(f"[perf] Total /scan-repo: {time.time()-t0:.1f}s")
-        return AnalysisResponse(
-            results=results, attack_chains=chains, executive_summary=summary,
-            total_expected_loss=sum(r.expected_loss for r in results),
-            total_fix_cost=sum(r.fix_cost_usd for r in results),
-            vulnerability_count=len(results),
-            filtered_count=filtered,
-            gemini_enabled=bool(req.gemini_api_key)
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if repo_path and os.path.exists(repo_path):
-            _rmtree_windows_safe(repo_path)
+            semgrep_parsed  = parse_semgrep_findings(semgrep_raw, req.company.deployment_exposure, repo_path)
+            trivy_parsed    = parse_trivy_findings(trivy_raw, req.company.deployment_exposure, repo_path)
+            combined_parsed = semgrep_parsed + trivy_parsed
+            logger.info(f"[perf] Scanners done in {time.time()-t_scan:.1f}s — {len(combined_parsed)} findings")
+
+            # Step 3: Risk Engine
+            yield json.dumps({"status": "progress", "message": f"Analyzing {len(combined_parsed)} findings with AI models...", "percent": 60}) + "\n"
+            results, chains, filtered = run_risk_engine(combined_parsed, req.company, req.gemini_api_key)
+            
+            # Step 4: Finalizing
+            yield json.dumps({"status": "progress", "message": "Applying financial metrics and ranking risks...", "percent": 90}) + "\n"
+            os.makedirs("data", exist_ok=True)
+            with open("data/risk_results.json", "w") as f:
+                json.dump({"results": [r.dict() for r in results],
+                           "chains":  [c.dict() for c in chains]}, f, indent=2)
+            
+            summary = generate_executive_summary(results, req.company, chains)
+            logger.info(f"[perf] Total /scan-repo: {time.time()-t0:.1f}s")
+
+            final_data = AnalysisResponse(
+                results=results, 
+                attack_chains=chains, 
+                executive_summary=summary,
+                total_expected_loss=sum(r.expected_loss for r in results),
+                total_fix_cost=sum(r.fix_cost_usd for r in results),
+                vulnerability_count=len(results),
+                filtered_count=filtered,
+                gemini_enabled=bool(req.gemini_api_key)
+            )
+            
+            yield json.dumps({"status": "done", "data": final_data.dict()}) + "\n"
+
+        except Exception as e:
+            logger.exception(f"Scan failed: {e}")
+            yield json.dumps({"status": "error", "message": str(e)}) + "\n"
+        finally:
+            if repo_path and os.path.exists(repo_path):
+                _rmtree_windows_safe(repo_path)
+
+    return StreamingResponse(scan_generator(), media_type="application/x-ndjson")
 
 
 
