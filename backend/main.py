@@ -456,7 +456,7 @@ async def scan_repo(req: ScanRequest):
         repo_path = None
         try:
             t0 = time.time()
-            
+
             # Step 1: Clone
             yield json.dumps({"status": "progress", "message": "Cloning repository...", "percent": 10}) + "\n"
             repo_path = clone_repo(req.repo_url, req.branch)
